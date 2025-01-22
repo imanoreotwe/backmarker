@@ -1,8 +1,11 @@
 #![allow(dead_code)]
 use std::{
-    collections::HashMap,
-    io::Error,
-    net::{SocketAddr, UdpSocket},
+    collections::HashMap, ffi::CString, fs::File, io::{Error, Write}, mem, net::{SocketAddr, UdpSocket}, ptr
+};
+
+use windows_sys::{
+    Win32::Foundation::*, 
+    Win32::System::Memory::*
 };
 
 const BROADCASTING_PROTOCOL_VERSION: u8 = 4;
@@ -41,7 +44,7 @@ impl TryFrom<u8> for InboundMessageType {
         match value {
             1 => Ok(InboundMessageType::RegistrationResult),
             2 => Ok(InboundMessageType::RealtimeUpdate),
-            3 => Ok(InboundMessageType::EntryListCar),
+            3 => Ok(InboundMessageType::RealtimeCarUpdate),
             4 => Ok(InboundMessageType::EntryList),
             5 => Ok(InboundMessageType::TrackData),
             6 => Ok(InboundMessageType::EntryListCar),
@@ -110,7 +113,38 @@ impl TryFrom<u8> for SessionPhase {
             6 => Ok(SessionPhase::SessionOver),
             7 => Ok(SessionPhase::PostSession),
             8 => Ok(SessionPhase::ResultUI),
-            _ => Err("could not parse race session type"),
+            _ => Err("could not parse session phase"),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[repr(u8)]
+enum BroadcastingEventType {
+    None = 0,
+    GreenFlag = 1,
+    SessionOver = 2,
+    PenaltyCommMsg = 3,
+    Accident = 4,
+    LapCompleted = 5,
+    BestSessionLap = 6,
+    BestPersonalLap = 7,
+}
+
+impl TryFrom<u8> for BroadcastingEventType {
+    type Error = &'static str;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(BroadcastingEventType::None),
+            1 => Ok(BroadcastingEventType::GreenFlag),
+            2 => Ok(BroadcastingEventType::SessionOver),
+            3 => Ok(BroadcastingEventType::PenaltyCommMsg),
+            4 => Ok(BroadcastingEventType::Accident),
+            5 => Ok(BroadcastingEventType::LapCompleted),
+            6 => Ok(BroadcastingEventType::BestSessionLap),
+            7 => Ok(BroadcastingEventType::BestPersonalLap),
+            _ => Err("could not parse broadcasting event type"),
         }
     }
 }
@@ -236,6 +270,14 @@ struct RealtimeUpdate {
 }
 
 #[derive(Debug)]
+struct BroadcastingEvent {
+    event_type: BroadcastingEventType,
+    msg: String,
+    time_ms: u32,
+    car_id: u32,
+}
+
+#[derive(Debug)]
 enum InboundMessage {
     RegistrationResult(RegistrationResult),
     EntryList(EntryList),
@@ -282,7 +324,13 @@ impl UdpReader {
         let size = u16::from_le_bytes(self.read_bytes(2).unwrap().try_into().unwrap());
         match core::str::from_utf8(&self.read_bytes(size as usize).unwrap()) {
             Ok(s) => Ok(s.to_owned()),
-            Err(_e) => Err("could not parse string".to_string()),
+            Err(_e) => {
+                eprintln!("buf pointer: {}", self.pointer);
+                let mut f = File::create("dump.dat").unwrap();
+                f.write_all(&self.buf).unwrap();
+                disconnect(&self.socket).unwrap();
+                Err("could not parse string".to_string())
+            }
         }
     }
 
@@ -311,13 +359,137 @@ impl UdpReader {
     }
 }
 
+/*
+    SHARED MEMORY UTILS
+*/
+
+#[derive(Debug)]
+#[repr(C)]
+struct Physics {
+    packet_id: i32,
+    gas: f32,
+    brake: f32,
+    fuel: f32,
+    gear: i32,
+    rpm: i32,
+    steer_angle: f32,
+    speed_kmh: f32,
+    velocity: [f32; 3],
+    acc_g: [f32; 3],
+    wheel_slip: [f32; 4],
+    wheel_load: [f32; 4], // unused
+    wheel_pressure: [f32; 4],
+    wheel_angular_speed: [f32; 4],
+    tire_wear: [f32; 4], // unused
+    tyre_dirty_level: [f32; 4], // unused
+    tyre_core_temp: [f32; 4],   // double field??
+    camber_rad: [f32; 4],
+    suspension_travel: [f32; 4],
+    drs: f32,
+    tc: f32, // double double field????
+    heading: f32,
+    pitch: f32,
+    roll: f32,
+    cg_height: f32, // unused
+    car_damage: [f32; 5],
+    number_of_tyres_out: i32, // unused
+    pit_limiter_on: i32,
+    abs: f32, // double double double field?????
+    kers_charge: f32, // unused
+    kers_input: f32, // unused
+    auto_shifter_on: i32,
+    ride_height: [f32; 2], // unused
+    turbo_boost: f32,
+    ballast: f32, // unused
+    air_density: f32, // unused
+    air_temp: f32,
+    road_temp: f32,
+    local_angular_vel: [f32; 3],
+    final_ff: f32,
+    performance_meter: f32, // unused
+    enginer_brake: i32, // unused
+    ers_recovery_level: i32, // unused
+    ers_power_level: i32, // unused
+    ers_heat_charging: i32, // unused
+    ers_is_chargin: i32, // unused
+    kers_current_kj: f32, // unused
+    drs_available: i32, // unused
+    drs_enabled: i32, // unused
+    brake_temp: [f32; 4],
+    clutch: f32,
+    tyre_temp_i: [f32; 4], // unused
+    tyre_temp_m: [f32; 4], // unused
+    tyre_temp_o: [f32; 4], // unused
+    is_ai_controlled: i32,
+    tyre_contact_point: [f32; 12], // 4x3 array
+    tyre_contact_normal: [f32; 12], // 4x3 array
+    tyre_contact_heading: [f32; 12], // 4x3 array
+    brake_bias: f32,
+    local_velocity: [f32; 3],
+    p2p_activation: i32, // unused
+    p2p_status: i32, // unused
+    current_max_rpm: f32, // unused
+    mz: [f32; 4], // unused
+    fx: [f32; 4], // unused
+    fy: [f32; 4], // unused
+    slip_ratio: [f32; 4],
+    slip_angle: [f32; 4],
+    tc_in_action: i32, // unused
+    abs_in_action: i32, // unused
+    suspension_damage: [f32; 4], // unused
+    tyre_temp: [f32; 4], // unused
+    water_temp: f32,
+    brake_pressure: [f32; 4], // unused
+    front_brake_compound: i32,
+    rear_brake_compound: i32,
+    pad_life: [f32; 4],
+    disc_life: [f32; 4],
+    ignition_on: i32,
+    starter_engine_on: i32,
+    is_engine_running: i32,
+    kerb_vibration: f32,
+    slip_vibrations: f32,
+    g_vibrations: f32,
+    abs_vibrations: f32
+}
+
 fn main() -> std::io::Result<()> {
     let addr: SocketAddr = "127.0.0.1:9000".parse().expect("unable to parse address");
 
     let mut reader = UdpReader::new();
     let _recv_bytes = connect(&reader.socket, addr).expect("cannot connect to ACC");
+
+    //setup memory mapping
+    let sz_name = CString::new("Local\\acpmf_physics").unwrap();
+    let sz_name_ptr = sz_name.as_ptr() as *const u8;
+    let map_file_buffer;
+    unsafe {
+        let physics_handle = CreateFileMappingA(
+            INVALID_HANDLE_VALUE,
+            ptr::null(),
+            PAGE_READWRITE,
+            0,
+            mem::size_of::<Physics>().try_into().unwrap(),
+            sz_name_ptr
+        )
+        .as_mut();
+
+        map_file_buffer = MapViewOfFile(
+            physics_handle.unwrap(),
+            FILE_MAP_READ,
+            0,
+            0,
+            mem::size_of::<Physics>().try_into().unwrap(),
+        )
+        .Value
+        .as_ref();
+    }
+    
     println!("connected!");
+    let mut _counter = 0;
     loop {
+        // grab UDP data
+        /* 
         reader.listen().unwrap();
         match InboundMessageType::try_from(reader.read_u8().unwrap()).unwrap() {
             InboundMessageType::RegistrationResult => {
@@ -327,21 +499,38 @@ fn main() -> std::io::Result<()> {
                 request_track_data(&reader.socket, registration.connection_id).unwrap();
             }
             InboundMessageType::RealtimeUpdate => {
-                //let realtime_update = parse_realtime_update(&mut reader).unwrap();
-                //println!("{:#?}", realtime_update);
+                /*
+                println!("realtime update");
+                let realtime_update = parse_realtime_update(&mut reader).unwrap();
+                println!("{:#?}", realtime_update);
+                */
             }
             InboundMessageType::RealtimeCarUpdate => {
-                let realtime_update = parse_realtime_car_update(&mut reader).unwrap();
-                println!("{:#?}", realtime_update);
-                // @TODO we can update car/driver entry list here
+                /*
+                if counter % 1000000000 == 0 {
+                    println!("realtime car update");
+                    let realtime_update = parse_realtime_car_update(&mut reader).unwrap();
+                    println!("{:#?}", realtime_update);
+                    // @TODO we can update car/driver entry list here
+                    counter = 0;
+                } else {
+                    counter += 1;
+                }
+                */
             }
             InboundMessageType::EntryList => {
+                /*
                 println!("entry list");
                 let entries = parse_entry_list(&mut reader).unwrap();
                 println!("{:#?}", entries);
+                */
             }
             InboundMessageType::EntryListCar => {
-                //parse_entry_list_car().unwrap();
+                /*
+                println!("entry list car");
+                let car_list = parse_entry_list_car(&mut reader).unwrap();
+                println!("{:#?}", car_list);
+                */
             }
             InboundMessageType::TrackData => {
                 println!("track data");
@@ -349,9 +538,17 @@ fn main() -> std::io::Result<()> {
                 println!("{:#?}", track_data);
             }
             InboundMessageType::BroadcastingEvent => {
-                //parse_broadcasting_event().unwrap();
+                println!("broadcasting event");
+                let broadcast = parse_broadcasting_event(&mut reader).unwrap();
+                println!("{:#?}", broadcast)
             }
         }
+        */
+
+        // grab shared memory data
+        let physics_struct = unsafe { & *((map_file_buffer.unwrap() as *const _) as *const Physics) };
+
+        //println!("struct: {:#?}", physics_struct.tyre_temp);
     }
 }
 
@@ -627,6 +824,16 @@ fn parse_track_data(reader: &mut UdpReader) -> Result<TrackData, String> {
     })
 }
 
-fn parse_broadcasting_event() -> Result<InboundMessage, String> {
-    Err("not implemented".to_string())
+fn parse_broadcasting_event(reader: &mut UdpReader) -> Result<BroadcastingEvent, String> {
+    let event_type = BroadcastingEventType::try_from(reader.read_u8().unwrap()).unwrap();
+    let msg = reader.read_string().unwrap();
+    let time_ms = reader.read_u32().unwrap();
+    let car_id = reader.read_u32().unwrap();
+
+    Ok(BroadcastingEvent {
+        event_type,
+        msg,
+        time_ms,
+        car_id,
+    })
 }
