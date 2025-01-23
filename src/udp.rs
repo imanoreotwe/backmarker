@@ -1,5 +1,5 @@
 //! Module for ACC UDP utilities
-//! 
+//!
 //! Handles all connection, parsing, and data modeling
 //!
 //! example of setting up a basic connection:
@@ -17,7 +17,12 @@
 //! }
 //! ```
 
-use std::{collections::HashMap, fs::File, net::{SocketAddr, UdpSocket}, io::{Error, Write}};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{Error, Write},
+    net::{SocketAddr, UdpSocket},
+};
 
 const BROADCASTING_PROTOCOL_VERSION: u8 = 4;
 
@@ -182,7 +187,7 @@ pub struct CarInfo {
 }
 
 #[derive(Debug)]
-enum LapType {
+pub enum LapType {
     Outlap,
     Inlap,
     Regular,
@@ -190,13 +195,13 @@ enum LapType {
 
 #[derive(Debug)]
 pub struct LapInfo {
-    laptime_ms: u32,
-    car_index: u16,
-    driver_index: u16,
-    lap_splits: Vec<u32>,
-    is_invalid: bool,
-    is_valid_for_best: bool,
-    lap_type: LapType,
+    pub laptime_ms: u32,
+    pub car_index: u16,
+    pub driver_index: u16,
+    pub lap_splits: Vec<u32>,
+    pub is_invalid: bool,
+    pub is_valid_for_best: bool,
+    pub lap_type: LapType,
 }
 
 /// Registration result message
@@ -313,14 +318,16 @@ impl UdpReader {
         }
     }
 
+    /// Listens for new UDP data
+    ///
+    /// Recieves UDP data and stores them in buffer
+    /// @TODO may need to implement more advanced reading mechanism for when multiple messages are read
     pub fn listen(&mut self) -> Result<usize, String> {
-        //println!("{:?}", self.buf);
         self.size = self
             .socket
             .recv(&mut self.buf)
             .expect("could not read socket");
         self.pointer = 0;
-        //println!("{:?}", self.buf);
         Ok(self.size)
     }
 
