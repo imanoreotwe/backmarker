@@ -22,7 +22,7 @@ use std::{collections::HashMap, fs::File, net::{SocketAddr, UdpSocket}, io::{Err
 const BROADCASTING_PROTOCOL_VERSION: u8 = 4;
 
 #[repr(u8)]
-enum OutboundMessageType {
+pub enum OutboundMessageType {
     RegisterCommand = 1,
     UnregisterCommand = 9,
 
@@ -38,7 +38,7 @@ enum OutboundMessageType {
 }
 
 #[repr(u8)]
-enum InboundMessageType {
+pub enum InboundMessageType {
     RegistrationResult = 1,
     RealtimeUpdate = 2,
     RealtimeCarUpdate = 3,
@@ -131,7 +131,7 @@ impl TryFrom<u8> for SessionPhase {
 
 #[derive(Debug)]
 #[repr(u8)]
-enum BroadcastingEventType {
+pub enum BroadcastingEventType {
     None = 0,
     GreenFlag = 1,
     SessionOver = 2,
@@ -161,7 +161,7 @@ impl TryFrom<u8> for BroadcastingEventType {
 }
 
 #[derive(Debug)]
-struct DriverInfo {
+pub struct DriverInfo {
     first_name: String,
     last_name: String,
     short_name: String,
@@ -170,15 +170,15 @@ struct DriverInfo {
 }
 
 #[derive(Debug)]
-struct CarInfo {
-    car_index: u16,
-    car_model_type: u8,
-    team_name: String,
-    race_number: u32,
-    cup_category: u8,
-    current_driver_index: u8,
-    drivers: Vec<DriverInfo>,
-    nationality: u16, // maybe enum
+pub struct CarInfo {
+    pub car_index: u16,
+    pub car_model_type: u8,
+    pub team_name: String,
+    pub race_number: u32,
+    pub cup_category: u8,
+    pub current_driver_index: u8,
+    pub drivers: Vec<DriverInfo>,
+    pub nationality: u16, // maybe enum
 }
 
 #[derive(Debug)]
@@ -189,7 +189,7 @@ enum LapType {
 }
 
 #[derive(Debug)]
-struct LapInfo {
+pub struct LapInfo {
     laptime_ms: u32,
     car_index: u16,
     driver_index: u16,
@@ -207,9 +207,9 @@ struct LapInfo {
 /// 5-6 : Error msg len
 /// 7-n : Error msg
 #[derive(Debug)]
-struct RegistrationResult {
-    connection_id: u32,
-    is_readonly: bool,
+pub struct RegistrationResult {
+    pub connection_id: u32,
+    pub is_readonly: bool,
 }
 
 /// Entry List message
@@ -219,13 +219,13 @@ struct RegistrationResult {
 /// 4-5 : car count
 /// 6-n : car infos
 #[derive(Debug)]
-struct EntryList {
+pub struct EntryList {
     connection_id: u32,
-    cars: Vec<u16>,
+    pub cars: Vec<u16>,
 }
 
 #[derive(Debug)]
-struct TrackData {
+pub struct TrackData {
     connection_id: u32,
     track_name: String,
     track_id: u32,
@@ -235,29 +235,29 @@ struct TrackData {
 }
 
 #[derive(Debug)]
-struct RealtimeCarUpdate {
-    car_index: u16,
-    driver_index: u16,
-    driver_count: u8,
-    gear: u8, // R 0, N 1, 1 2, ...
-    world_pos_x: f32,
-    world_pos_y: f32,
-    yaw: f32,
-    car_location: u8, // -, track, pitlane, pit entry pit exit = 4
-    kmh: u16,
-    position: u16,        // official P/Q/R position (1 indexed)
-    cup_position: u16,    // official P/Q/R position (1 indexed)
-    track_position: u16,  // position on track (1 based)
-    spline_position: f32, // track position between 0.0 and 1.0
-    laps: u16,
-    delta: u32, // realtime delta to best session lap
-    best_session_lap: LapInfo,
-    last_lap: LapInfo,
-    current_lap: LapInfo,
+pub struct RealtimeCarUpdate {
+    pub car_index: u16,
+    pub driver_index: u16,
+    pub driver_count: u8,
+    pub gear: u8, // R 0, N 1, 1 2, ...
+    pub world_pos_x: f32,
+    pub world_pos_y: f32,
+    pub yaw: f32,
+    pub car_location: u8, // -, track, pitlane, pit entry pit exit = 4
+    pub kmh: u16,
+    pub position: u16,        // official P/Q/R position (1 indexed)
+    pub cup_position: u16,    // official P/Q/R position (1 indexed)
+    pub track_position: u16,  // position on track (1 based)
+    pub spline_position: f32, // track position between 0.0 and 1.0
+    pub laps: u16,
+    pub delta: u32, // realtime delta to best session lap
+    pub best_session_lap: LapInfo,
+    pub last_lap: LapInfo,
+    pub current_lap: LapInfo,
 }
 
 #[derive(Debug)]
-struct RealtimeUpdate {
+pub struct RealtimeUpdate {
     event_index: u16,
     session_index: u16,
     session_type: RaceSessionType,
@@ -281,11 +281,11 @@ struct RealtimeUpdate {
 }
 
 #[derive(Debug)]
-struct BroadcastingEvent {
-    event_type: BroadcastingEventType,
-    msg: String,
-    time_ms: u32,
-    car_id: u32,
+pub struct BroadcastingEvent {
+    pub event_type: BroadcastingEventType,
+    pub msg: String,
+    pub time_ms: u32,
+    pub car_id: u32,
 }
 
 #[derive(Debug)]
@@ -313,7 +313,7 @@ impl UdpReader {
         }
     }
 
-    fn listen(&mut self) -> Result<usize, String> {
+    pub fn listen(&mut self) -> Result<usize, String> {
         //println!("{:?}", self.buf);
         self.size = self
             .socket
@@ -357,7 +357,7 @@ impl UdpReader {
         ))
     }
 
-    fn read_u8(&mut self) -> Result<u8, String> {
+    pub fn read_u8(&mut self) -> Result<u8, String> {
         Ok(u8::from_le_bytes(
             self.read_bytes(1).unwrap().try_into().unwrap(),
         ))
@@ -386,12 +386,12 @@ pub fn connect(socket: &UdpSocket, addr: SocketAddr) -> Result<usize, Error> {
     socket.send(&buf)
 }
 
-fn disconnect(socket: &UdpSocket) -> Result<usize, Error> {
+pub fn disconnect(socket: &UdpSocket) -> Result<usize, Error> {
     let buf = vec![OutboundMessageType::UnregisterCommand as u8];
     socket.send(&buf)
 }
 
-fn request_entry_list(socket: &UdpSocket, connection_id: u32) -> Result<usize, Error> {
+pub fn request_entry_list(socket: &UdpSocket, connection_id: u32) -> Result<usize, Error> {
     let mut buf: Vec<u8> = Vec::with_capacity(5);
     buf.push(OutboundMessageType::RequestEntryList as u8);
     buf.extend_from_slice(&connection_id.to_le_bytes());
@@ -399,7 +399,7 @@ fn request_entry_list(socket: &UdpSocket, connection_id: u32) -> Result<usize, E
     socket.send(&buf)
 }
 
-fn request_track_data(socket: &UdpSocket, connection_id: u32) -> Result<usize, Error> {
+pub fn request_track_data(socket: &UdpSocket, connection_id: u32) -> Result<usize, Error> {
     let mut buf: Vec<u8> = Vec::with_capacity(5);
     buf.push(OutboundMessageType::RequestTrackData as u8);
     buf.extend_from_slice(&connection_id.to_le_bytes());
@@ -407,7 +407,7 @@ fn request_track_data(socket: &UdpSocket, connection_id: u32) -> Result<usize, E
     socket.send(&buf)
 }
 
-fn parse_registration_result(reader: &mut UdpReader) -> Result<RegistrationResult, String> {
+pub fn parse_registration_result(reader: &mut UdpReader) -> Result<RegistrationResult, String> {
     let connection_id = reader.read_u32().unwrap();
     if reader.read_u8().unwrap() > 0 {
         Ok(RegistrationResult {
@@ -459,7 +459,7 @@ fn parse_lap(reader: &mut UdpReader) -> Result<LapInfo, String> {
     })
 }
 
-fn parse_realtime_update(reader: &mut UdpReader) -> Result<RealtimeUpdate, String> {
+pub fn parse_realtime_update(reader: &mut UdpReader) -> Result<RealtimeUpdate, String> {
     let event_index = reader.read_u16().unwrap();
     let session_index = reader.read_u16().unwrap();
     let session_type = RaceSessionType::try_from(reader.read_u8().unwrap()).unwrap();
@@ -510,7 +510,7 @@ fn parse_realtime_update(reader: &mut UdpReader) -> Result<RealtimeUpdate, Strin
     })
 }
 
-fn parse_realtime_car_update(reader: &mut UdpReader) -> Result<RealtimeCarUpdate, String> {
+pub fn parse_realtime_car_update(reader: &mut UdpReader) -> Result<RealtimeCarUpdate, String> {
     let car_index = reader.read_u16().unwrap();
     let driver_index = reader.read_u16().unwrap();
     let driver_count = reader.read_u8().unwrap();
@@ -552,7 +552,7 @@ fn parse_realtime_car_update(reader: &mut UdpReader) -> Result<RealtimeCarUpdate
     })
 }
 
-fn parse_entry_list(reader: &mut UdpReader) -> Result<EntryList, String> {
+pub fn parse_entry_list(reader: &mut UdpReader) -> Result<EntryList, String> {
     let connection_id = reader.read_u32().unwrap();
     let car_count = reader.read_u16().unwrap();
     let mut entries = EntryList {
@@ -568,7 +568,7 @@ fn parse_entry_list(reader: &mut UdpReader) -> Result<EntryList, String> {
     Ok(entries)
 }
 
-fn parse_entry_list_car(reader: &mut UdpReader) -> Result<CarInfo, String> {
+pub fn parse_entry_list_car(reader: &mut UdpReader) -> Result<CarInfo, String> {
     let car_index = reader.read_u16().unwrap();
     let car_model_type = reader.read_u8().unwrap();
     let team_name = reader.read_string().unwrap();
@@ -607,7 +607,7 @@ fn parse_entry_list_car(reader: &mut UdpReader) -> Result<CarInfo, String> {
     })
 }
 
-fn parse_track_data(reader: &mut UdpReader) -> Result<TrackData, String> {
+pub fn parse_track_data(reader: &mut UdpReader) -> Result<TrackData, String> {
     let connection_id = reader.read_u32().unwrap();
     let track_name = reader.read_string().unwrap();
     let track_id = reader.read_u32().unwrap();
@@ -642,7 +642,7 @@ fn parse_track_data(reader: &mut UdpReader) -> Result<TrackData, String> {
     })
 }
 
-fn parse_broadcasting_event(reader: &mut UdpReader) -> Result<BroadcastingEvent, String> {
+pub fn parse_broadcasting_event(reader: &mut UdpReader) -> Result<BroadcastingEvent, String> {
     let event_type = BroadcastingEventType::try_from(reader.read_u8().unwrap()).unwrap();
     let msg = reader.read_string().unwrap();
     let time_ms = reader.read_u32().unwrap();
