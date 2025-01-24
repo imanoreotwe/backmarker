@@ -24,6 +24,8 @@ use std::{
     net::{SocketAddr, UdpSocket},
 };
 
+use log::debug;
+
 const BROADCASTING_PROTOCOL_VERSION: u8 = 4;
 
 #[repr(u8)]
@@ -328,6 +330,7 @@ impl UdpReader {
             .recv(&mut self.buf)
             .expect("could not read socket");
         self.pointer = 0;
+        debug!("reader read: {:?}", self.size);
         Ok(self.size)
     }
 
