@@ -19,6 +19,7 @@ use log::{debug, error, info};
 
 mod mm;
 mod udp;
+mod utils;
 
 #[derive(Debug)]
 struct CarLaps {
@@ -118,7 +119,7 @@ impl Backmarker {
                 car.1.laps.last().unwrap().laptime_ms
             };
             col_vec.push(
-                container(row![text(car.1.car_info.race_number), text(laptime)].spacing(4)).into(),
+                container(row![text(car.1.car_info.race_number), text(utils::ms_to_string(laptime))].spacing(4)).into(),
             )
         }
         container(Column::from_vec(col_vec))
