@@ -24,7 +24,7 @@ use std::{
     net::{SocketAddr, UdpSocket},
 };
 
-use log::debug;
+use log::{debug, error, trace};
 
 const BROADCASTING_PROTOCOL_VERSION: u8 = 4;
 
