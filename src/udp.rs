@@ -330,7 +330,7 @@ impl UdpReader {
             .recv(&mut self.buf)
             .expect("could not read socket");
         self.pointer = 0;
-        debug!("reader read: {:?}", self.size);
+        trace!("reader read: {:?}", self.size);
         Ok(self.size)
     }
 
@@ -346,7 +346,7 @@ impl UdpReader {
         match core::str::from_utf8(&self.read_bytes(size as usize).unwrap()) {
             Ok(s) => Ok(s.to_owned()),
             Err(_e) => {
-                eprintln!("buf pointer: {}", self.pointer);
+                error!("buf pointer: {}", self.pointer);
                 let mut f = File::create("dump.dat").unwrap();
                 f.write_all(&self.buf).unwrap();
                 disconnect(&self.socket).unwrap();

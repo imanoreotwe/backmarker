@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 use std::{
-    collections::HashMap,
+    cell::{Ref, RefCell},
+    collections::{HashMap, VecDeque},
+    mem::drop,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -15,27 +18,34 @@ use iced::{
     Result, Subscription, Task,
 };
 
-use log::{debug, error, info};
+use log::{debug, error, info, trace};
 
 mod mm;
 mod udp;
 mod utils;
 
 #[derive(Debug)]
-struct CarLaps {
+struct Car {
     car_info: udp::CarInfo,
     laps: Vec<udp::LapInfo>,
     update_ready: bool,
     lap_count: u16,
+    position: u16,
+    prev: Option<u16>,
+    next: Option<u16>,
 }
 
 struct Backmarker {
-    cars: HashMap<usize, CarLaps>,
+    /// Maps car index to `Car` struct
+    cars: HashMap<u16, RefCell<Car>>,
+    /// Car index of the leader
+    leader: Option<u16>,
+    last: Option<u16>,
+    update_queue: Vec<u16>,
 }
 
 #[derive(Debug)]
 enum Message {
-    NewLap(CarLaps),
     Tick(Instant),
     RealTimeCarUpdate(udp::RealtimeCarUpdate),
     EntryList(udp::EntryList),
@@ -45,6 +55,7 @@ enum Message {
 
 fn main() -> Result {
     env_logger::init();
+    info!("backmarker started");
     iced::daemon("backmarker", Backmarker::update, Backmarker::view)
         .subscription(Backmarker::subscription)
         .run_with(move || Backmarker::new())
@@ -52,8 +63,12 @@ fn main() -> Result {
 
 impl Backmarker {
     fn new() -> (Backmarker, Task<Message>) {
+        info!("starting ui");
         let bm = Backmarker {
             cars: HashMap::new(),
+            leader: None,
+            last: None,
+            update_queue: vec![],
         };
 
         let (_main_window_id, open_main_window) = window::open(Settings::default());
@@ -63,64 +78,149 @@ impl Backmarker {
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Tick(now) => Task::none(),
-            Message::NewLap(update) => Task::none(),
+            Message::Tick(_now) => Task::none(),
             Message::RealTimeCarUpdate(realtime_update) => {
-                if self
-                    .cars
-                    .contains_key(&(realtime_update.car_index as usize))
+                trace!("realtime update message");
+                if self.cars.contains_key(&realtime_update.car_index)
+                    && self.update_queue.contains(&realtime_update.car_index)
                 {
-                    let car = self
-                        .cars
-                        .get_mut(&(realtime_update.car_index as usize))
+                    let queue_index = self
+                        .update_queue
+                        .binary_search(&realtime_update.car_index)
                         .unwrap();
-                    if car.update_ready {
+                    self.update_queue.remove(queue_index);
+                    {
+                        let mut car = self
+                            .cars
+                            .get(&realtime_update.car_index)
+                            .unwrap()
+                            .borrow_mut();
+
                         car.laps.push(realtime_update.last_lap);
                         car.update_ready = false;
                         car.lap_count = realtime_update.laps;
+
+                        if car.position != realtime_update.position {
+                            if realtime_update.car_index == car.car_info.car_index {
+                                car.position = realtime_update.position
+                            } else {
+                                self.cars
+                                    .get(&realtime_update.car_index)
+                                    .unwrap()
+                                    .borrow_mut()
+                                    .position = realtime_update.position;
+                            }
+                        }
+                    }
+
+                    let car = self.cars.get(&realtime_update.car_index).unwrap().borrow();
+
+                    if car.position != realtime_update.position {
+                        // remove step
+                        if car.prev.is_some() {
+                            let prev = car.prev.unwrap();
+                            self.cars.get(&prev).unwrap().borrow_mut().next = car.next;
+                            if car.next.is_some() {
+                                // prev <- next
+                                self.cars.get(&car.next.unwrap()).unwrap().borrow_mut().prev =
+                                    car.prev;
+                            }
+                        }
+
+                        // add step
+                        let mut inserting_car = self
+                            .cars
+                            .get(&self.find_position_index_or(realtime_update.position))
+                            .unwrap()
+                            .borrow_mut();
+                        if inserting_car.prev.is_some() {
+                            self.cars
+                                .get(&inserting_car.prev.unwrap())
+                                .unwrap()
+                                .borrow_mut()
+                                .next = Some(car.car_info.car_index);
+
+                            inserting_car.prev = Some(car.car_info.car_index);
+                        } else {
+                            self.leader = Some(car.car_info.car_index);
+                        }
                     }
                 }
                 Task::none()
-            },
+            }
             Message::CarInfo(car_info) => {
-                self.cars.insert(
-                    car_info.car_index.into(),
-                    CarLaps {
-                        car_info,
-                        laps: vec![],
-                        update_ready: false,
-                        lap_count: 0,
-                    },
-                );
+                trace!("car info message");
+                let index = car_info.car_index;
+                if !self.cars.contains_key(&index) {
+                    self.cars.insert(
+                        car_info.car_index.into(),
+                        RefCell::new(Car {
+                            car_info,
+                            laps: vec![],
+                            update_ready: false,
+                            lap_count: 0,
+                            position: 0,
+                            prev: self.last,
+                            next: None,
+                        }),
+                    );
+
+                    if self.leader.is_none() {
+                        self.leader = Some(index);
+                    } else {
+                        let mut curr = self.cars.get(&self.last.unwrap()).unwrap().borrow_mut();
+                        curr.next = Some(index);
+                        curr.prev = self.last;
+                    }
+                    self.last = Some(index);
+                }
                 Task::none()
-            },
+            }
             Message::BroadcastingEvent(broadcast) => {
+                trace!("broadcast event message");
                 match broadcast.event_type {
                     udp::BroadcastingEventType::LapCompleted => {
-                        let car = self.cars.get_mut(&(broadcast.car_id as usize));
-                        if !car.is_none() {
-                            car.unwrap().update_ready = true;
-                        }
+                        self.update_queue.push(broadcast.car_id as u16);
                     }
                     _ => {}
                 }
                 Task::none()
             }
+            Message::EntryList(entry_list) => Task::none(),
             _ => Task::none(),
         }
     }
 
-    fn view(&self, id: window::Id) -> Element<Message> {
+    fn view(&self, _id: window::Id) -> Element<Message> {
+        trace!("rendering!");
+        debug! {"cars: {:#?}", self.cars};
         let mut col_vec: Vec<Element<'_, _, _, _>> = vec![];
-        for car in self.cars.iter() {
-            let laptime = if car.1.laps.last().is_none() {
-                0
-            } else {
-                car.1.laps.last().unwrap().laptime_ms
-            };
-            col_vec.push(
-                container(row![text(car.1.car_info.race_number), text(utils::ms_to_string(laptime))].spacing(4)).into(),
-            )
+
+        if self.leader.is_some() {
+            let mut car = self.cars.get(&self.leader.unwrap());
+            while car.is_some() {
+                // temporary
+                let laptime = if car.unwrap().borrow().laps.last().is_none() {
+                    0
+                } else {
+                    car.unwrap().borrow().laps.last().unwrap().laptime_ms
+                };
+                col_vec.push(
+                    container(
+                        row![
+                            text(car.unwrap().borrow().position),
+                            text(car.unwrap().borrow().car_info.race_number),
+                            text(utils::ms_to_string(laptime))
+                        ]
+                        .spacing(4),
+                    )
+                    .into(),
+                );
+                if car.unwrap().borrow().next.is_none() {
+                    break;
+                }
+                car = self.cars.get(&car.unwrap().borrow().next.unwrap());
+            }
         }
         container(Column::from_vec(col_vec))
             .center_x(Fill)
@@ -132,6 +232,21 @@ impl Backmarker {
         let tick = iced::time::every(Duration::from_millis(100)).map(Message::Tick);
         let udp_sub = Subscription::run(udp_worker);
         Subscription::batch(vec![tick, udp_sub])
+    }
+
+    /// finds the car index at `position` on track or the last car
+    fn find_position_index_or(&self, position: u16) -> u16 {
+        let mut curr = self.cars.get(&self.leader.unwrap()).unwrap().borrow();
+        loop {
+            if curr.position == position {
+                return curr.car_info.car_index;
+            }
+            if curr.next.is_some() {
+                curr = self.cars.get(&curr.next.unwrap()).unwrap().borrow();
+            } else {
+                return curr.car_info.car_index;
+            }
+        }
     }
 }
 
@@ -150,8 +265,8 @@ fn udp_worker() -> impl Stream<Item = Message> {
             match udp::InboundMessageType::try_from(reader.read_u8().unwrap()).unwrap() {
                 udp::InboundMessageType::RegistrationResult => {
                     let registration = udp::parse_registration_result(&mut reader).unwrap();
-                    info!("connected!");
-                    debug!("{:#?}", registration);
+                    info!("connected to acc!");
+                    trace!("{:#?}", registration);
                     udp::request_entry_list(&reader.socket, registration.connection_id)
                         .expect("could not send entrylist request");
                     udp::request_track_data(&reader.socket, registration.connection_id)
@@ -166,7 +281,7 @@ fn udp_worker() -> impl Stream<Item = Message> {
                 }
                 udp::InboundMessageType::RealtimeCarUpdate => {
                     let realtime_update = udp::parse_realtime_car_update(&mut reader).unwrap();
-                    info!("got RealtimeCarUpdate!");
+                    trace!("got RealtimeCarUpdate!");
                     output
                         .send(Message::RealTimeCarUpdate(realtime_update))
                         .await
@@ -174,7 +289,7 @@ fn udp_worker() -> impl Stream<Item = Message> {
                 }
                 udp::InboundMessageType::EntryList => {
                     let entries = udp::parse_entry_list(&mut reader).unwrap();
-                    info!("got entry list!");
+                    trace!("got entry list!");
                     output
                         .send(Message::EntryList(entries))
                         .await
@@ -182,7 +297,7 @@ fn udp_worker() -> impl Stream<Item = Message> {
                 }
                 udp::InboundMessageType::EntryListCar => {
                     let car_info = udp::parse_entry_list_car(&mut reader).unwrap();
-                    info!("got car info!");
+                    trace!("got car info!");
                     output
                         .send(Message::CarInfo(car_info))
                         .await
@@ -197,7 +312,7 @@ fn udp_worker() -> impl Stream<Item = Message> {
                 }
                 udp::InboundMessageType::BroadcastingEvent => {
                     let broadcast = udp::parse_broadcasting_event(&mut reader).unwrap();
-                    info!("got broadcasting event!");
+                    trace!("got broadcasting event!");
                     output
                         .send(Message::BroadcastingEvent(broadcast))
                         .await
